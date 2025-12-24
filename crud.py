@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 import models, schemas
 from core import security
 
-def get_user_by_id(db: Session, user_id: str):
+def get_user_by_user_id(db: Session, user_id: str):
     return db.query(models.User).filter(models.User.user_id == user_id).first()
 
 def create_user(db: Session, user: schemas.UserCreate):
