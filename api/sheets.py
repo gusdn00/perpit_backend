@@ -1,12 +1,13 @@
 import os
 import uuid
 import boto3
+import datetime
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import get_db
 from core.security import get_current_user  # 이전에 만든 토큰 검증 함수
 from dotenv import load_dotenv
-from models import MusicJob
+from models import MusicJob, Sheet, User
 
 load_dotenv()
 
@@ -40,6 +41,7 @@ async def create_sheets(
 
     # 2. 고유한 작업 ID(jobID) 생성
     job_id = str(uuid.uuid4())
+    user_record = db.query(User).filter(User.user_id == current_user["user_id"]).first()
     # S3에 저장될 경로 설정 (예: uploads/uuid_파일명.mp3)
     s3_file_path = f"uploads/{job_id}_{file.filename}"
 
@@ -66,6 +68,19 @@ async def create_sheets(
             status="pending"                     # 초기 상태값 설정
         )
         db.add(new_job)
+        
+        new_sheet = Sheet(
+            job_id=job_id,
+            title=title,
+            file_path=None,  # 아직 결과가 없으므로 NULL
+            purpose=purpose,
+            style=style,
+            difficulty=difficulty,
+            creator_id=user_record.id, # 조회한 유저의 Integer PK값
+            created_at=datetime.datetime.utcnow()
+        )
+        db.add(new_sheet)
+
         db.commit()   # DB 저장 확정
         db.refresh(new_job)
     except Exception as e:

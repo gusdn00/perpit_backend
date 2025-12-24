@@ -16,6 +16,7 @@ class User(Base):
 class Sheet(Base):
     __tablename__ = "sheets"
     sid = Column(Integer, primary_key=True, index=True)
+    job_id = Column(String(100), unique=True, index=True)
     title = Column(String(50), nullable=False)
     file_path = Column(String(255))
     purpose = Column(Integer)  # 1: 반주용, 2: 연주용
