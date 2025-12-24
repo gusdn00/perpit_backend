@@ -1,0 +1,3 @@
+.\venv\Scripts\activate                        #venv 활성화
+
+uvicorn main:app --reload                      #서버 실행
