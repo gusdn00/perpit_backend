@@ -77,3 +77,38 @@ async def create_sheets(
         "jobId": job_id,
         "message": "악보 생성 작업이 시작되었습니다."
     }
+
+@router.get("/{job_id}")
+async def get_sheet_detail(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    특정 작업 ID(job_id)의 상세 정보를 조회합니다.
+    """
+    # 1. DB에서 해당 job_id를 가진 데이터를 찾습니다.
+    # 보안을 위해 현재 로그인한 유저(user_id)의 작업인지도 함께 확인합니다.
+    job = db.query(MusicJob).filter(
+        MusicJob.job_id == job_id,
+        MusicJob.user_id == current_user["user_id"]
+    ).first()
+
+    # 2. 데이터가 없는 경우 404 에러를 반환합니다.
+    if not job:
+        raise HTTPException(status_code=404, detail="해당 악보 정보를 찾을 수 없습니다.")
+    
+    if job.status == "failed":
+        raise HTTPException(status_code=404, detail="악보 생성에 실패했습니다.")
+
+    if job.status != "completed":
+        return {"status": job.status, "message": "아직 작업 중입니다."}
+
+    # 3. 요청하신 최소 응답 구조에 맞춰 데이터를 반환합니다.
+    return {
+        "job_id": job.job_id,
+        "status": job.status,
+        "title": job.title,
+        "result_url": job.result_s3_path, # AI가 생성해 넣은 S3 주소
+        "created_at": job.created_at
+    }
