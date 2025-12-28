@@ -62,11 +62,16 @@ async def create_sheets(
                 "file": (file.filename, file_content, file.content_type)
             }
             # AI 서버에 요청을 던짐 (비동기)
-            await client.post(AI_SERVER_URL, data=ai_data, files=ai_files, timeout=10.0)
+            response = await client.post(AI_SERVER_URL, data=ai_data, files=ai_files, timeout=60.0)
+        # [수정 3] AI 서버의 응답 상태를 체크합니다.
+            response.raise_for_status() 
+            print(f"AI 서버 전송 성공: {response.status_code}")
+
+        except httpx.HTTPStatusError as e:
+            print(f"AI 서버가 에러를 반환함: {e.response.status_code} - {e.response.text}")
         except Exception as e:
-            print(f"AI 서버 전송 실패: {e}")
-            # AI 전송 실패가 전체 프로세스를 중단시키지 않도록 하려면 여기서 pass 하거나,
-            # 엄격하게 관리하려면 raise를 사용합니다.
+            print(f"AI 서버 통신 중 알 수 없는 에러 발생: {e}")
+            # AI 서버 전송에 실패해도 S3 업로드와 DB 저장은 계속 진행합니다.
    
     # S3에 저장될 경로 설정 (예: uploads/uuid_파일명.mp3)
     s3_file_path = f"uploads/{job_id}_{file.filename}"
