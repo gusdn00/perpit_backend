@@ -119,6 +119,62 @@ async def create_sheets(
         "message": "악보 생성 작업이 시작되었습니다."
     }
 
+@router.get("/mysheets", status_code=200)
+async def get_my_sheets(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    명세서 규격 + 1분 유효 보안 링크 적용
+    """
+    try:
+        # 1. 유저의 정수 PK(id) 조회
+        user_record = db.query(User).filter(User.user_id == current_user["user_id"]).first()
+        if not user_record:
+            raise HTTPException(status_code=404, detail="유저 정보를 찾을 수 없습니다.")
+        
+        # 2. MySheet와 Sheet 조인 조회
+        results = db.query(Sheet).join(MySheet).filter(MySheet.user_id == user_record.id).all()
+
+        # 3. 데이터 가공 및 Presigned URL 생성
+        data = []
+        for s in results:
+            # S3에서 1분짜리 임시 링크 생성
+            try:
+                # s.file_path가 null일 경우를 대비
+                if s.file_path:
+                    object_key = s.file_path.split(f"{BUCKET_NAME}.s3.amazonaws.com/")[1]
+                    link = s3_client.generate_presigned_url(
+                        'get_object',
+                        Params={
+                            'Bucket': BUCKET_NAME,
+                            'Key': object_key,
+                            'ResponseContentDisposition': f'attachment; filename="{s.title}.musicxml"'
+                        },
+                        ExpiresIn=60  # 1분(60초) 설정
+                    )
+                else:
+                    link = None
+            except Exception:
+                link = s.file_path # 에러 시 기본 DB 경로 사용
+
+            data.append({
+                "sid": s.sid,
+                "name": s.title,
+                "link": link # 보안 링크 전달
+            })
+
+        return {
+            "data": data,
+            "meta": {
+                "count": len(data)
+            }
+        }
+    except Exception as e:
+        # 에러 발생 시 로그 출력
+        print(f"Error in get_my_sheets: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/{job_id}")
 async def get_sheet_detail(
     job_id: str,
@@ -157,7 +213,7 @@ async def get_sheet_detail(
                 # 다운로드 시 파일명을 예쁘게 지정하고 싶을 때 추가
                 'ResponseContentDisposition': f'attachment; filename="{job.title}.musicxml"'
             },
-            ExpiresIn=3600  # 1시간 동안만 유효
+            ExpiresIn=300  # 1시간 동안만 유효
         )
     except Exception as e:
         print(f"Presigned URL 생성 에러: {e}")
