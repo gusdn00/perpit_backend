@@ -3,7 +3,7 @@ import uuid
 import boto3
 import datetime
 import httpx
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 from database import get_db
 from core.security import get_current_user  # 이전에 만든 토큰 검증 함수
@@ -179,16 +179,16 @@ async def get_my_sheets(
         # 에러 발생 시 로그 출력
         print(f"Error in get_my_sheets: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    
+
 @router.get("/{job_id}/view")
-async def view_sheet(
+async def view_sheet_content(
     job_id: str,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    OSMD 등 프론트엔드 렌더러가 XML 데이터를 직접 읽을 수 있도록 
-    브라우저 '인라인' 출력용 보안 링크를 생성합니다.
+    S3의 XML 데이터를 직접 읽어와서 반환합니다. (CORS 문제 해결)
+    프론트엔드의 OSMD는 이 응답(XML 문자열)을 받아 바로 렌더링합니다.
     """
     # 1. DB에서 악보 작업 정보 조회
     job = db.query(MusicJob).filter(
@@ -196,37 +196,26 @@ async def view_sheet(
         MusicJob.user_id == current_user["user_id"]
     ).first()
 
-    if not job:
-        raise HTTPException(status_code=404, detail="악보 정보를 찾을 수 없습니다.")
-    
-    if job.status != "completed" or not job.result_s3_path:
-        raise HTTPException(status_code=400, detail="렌더링 가능한 악보가 아직 생성되지 않았습니다.")
+    # 데이터가 없거나 결과 경로가 없는 경우 예외 처리
+    if not job or not job.result_s3_path:
+        raise HTTPException(status_code=404, detail="악보 데이터를 찾을 수 없습니다.")
 
     try:
-        # 2. S3 Object Key 추출
+        # 2. S3 Object Key 추출 (URL 형태에 맞춰 분리)
+        # job.result_s3_path가 https://... 형식이어야 정상 작동합니다.
         object_key = job.result_s3_path.split(f"{BUCKET_NAME}.s3.amazonaws.com/")[1]
+        
+        # 3. S3에서 파일 내용 직접 읽기
+        s3_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=object_key)
+        xml_content = s3_obj['Body'].read().decode('utf-8') # 바이너리를 UTF-8 문자열로 변환
 
-        # 3. 1분 유효 '인라인' 전송 링크 생성
-        # ResponseContentType을 정확히 지정하고, Disposition을 'inline'으로 설정합니다.
-        presigned_url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={
-                'Bucket': BUCKET_NAME,
-                'Key': object_key,
-                'ResponseContentType': 'application/xml', # XML임을 명시
-                'ResponseContentDisposition': 'inline'    # 다운로드 대신 브라우저가 열도록 설정
-            },
-            ExpiresIn=300
-        )
-
-        return {
-            "message": "미리보기용 데이터 링크가 생성되었습니다.",
-            "view_url": presigned_url
-        }
-
+        # 4. XML 데이터 원문 반환
+        # Response를 사용하면 JSON이 아닌 순수 텍스트 데이터를 보낼 수 있습니다.
+        return Response(content=xml_content, media_type="application/xml")
+        
     except Exception as e:
-        print(f"미리보기 링크 생성 에러: {e}")
-        raise HTTPException(status_code=500, detail="미리보기 링크 생성 중 오류가 발생했습니다.")
+        print(f"View error (job_id: {job_id}): {e}")
+        raise HTTPException(status_code=500, detail="XML 데이터를 읽는 중 오류가 발생했습니다.")
 
 @router.get("/mysheets/{sid}/view")
 async def view_my_sheet_individual(
@@ -235,7 +224,8 @@ async def view_my_sheet_individual(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    보관함의 특정 악보(sid)에 대한 OSMD 전용 미리보기 링크를 생성합니다.
+    보관함의 특정 악보(sid) XML 데이터를 서버가 S3에서 직접 읽어 반환합니다.
+    CORS 문제를 해결하며 프론트엔드 OSMD 렌더링에 최적화된 방식입니다.
     """
     try:
         # 1. 현재 로그인한 유저 정보 확인
@@ -243,8 +233,7 @@ async def view_my_sheet_individual(
         if not user_record:
             raise HTTPException(status_code=404, detail="유저 정보를 찾을 수 없습니다.")
 
-        # 2. 보관함(MySheet)에 해당 악보가 있는지 권한 확인
-        # 유저가 남의 악보 sid를 넣어서 조회하는 것을 방지합니다.
+        # 2. 보관함(MySheet) 권한 확인 (본인 악보인지 검증)
         my_sheet_exists = db.query(MySheet).filter(
             MySheet.user_id == user_record.id,
             MySheet.sheet_sid == sid
@@ -253,34 +242,25 @@ async def view_my_sheet_individual(
         if not my_sheet_exists:
             raise HTTPException(status_code=403, detail="해당 악보에 대한 접근 권한이 없거나 보관함에 없습니다.")
 
-        # 3. 실제 악보(Sheet) 정보 가져오기
+        # 3. 실제 악보(Sheet) 경로 정보 조회
         sheet = db.query(Sheet).filter(Sheet.sid == sid).first()
         if not sheet or not sheet.file_path:
-            raise HTTPException(status_code=404, detail="악보 파일 경로를 찾을 수 없습니다.")
+            raise HTTPException(status_code=404, detail="악보 파일 정보를 찾을 수 없습니다.")
 
-        # 4. S3 Presigned URL 생성 (OSMD용 인라인 설정)
+        # 4. S3에서 XML 내용 직접 읽기
+        # URL에서 object_key 추출 (https://... 형태 기준)
         object_key = sheet.file_path.split(f"{BUCKET_NAME}.s3.amazonaws.com/")[1]
+        
+        s3_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=object_key)
+        xml_content = s3_obj['Body'].read().decode('utf-8')
 
-        view_url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={
-                'Bucket': BUCKET_NAME,
-                'Key': object_key,
-                'ResponseContentType': 'application/xml',
-                'ResponseContentDisposition': 'inline'
-            },
-            ExpiresIn=60 # 1분 유효
-        )
-
-        return {
-            "sid": sid,
-            "name": sheet.title,
-            "view_url": view_url
-        }
+        # 5. XML 데이터 원문 반환
+        # 프론트엔드는 이 응답을 받아 osmd.load(response.data)로 즉시 사용 가능합니다.
+        return Response(content=xml_content, media_type="application/xml")
 
     except Exception as e:
-        print(f"보관함 개별 미리보기 생성 에러: {e}")
-        raise HTTPException(status_code=500, detail="미리보기 링크를 생성하는 중 오류가 발생했습니다.")
+        print(f"보관함 XML 데이터 읽기 에러 (sid: {sid}): {e}")
+        raise HTTPException(status_code=500, detail="XML 데이터를 읽어오는 중 오류가 발생했습니다.")
 
 @router.delete("/mysheets/{sid}", status_code=204)
 async def delete_from_my_sheets(
