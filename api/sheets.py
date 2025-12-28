@@ -175,6 +175,42 @@ async def get_my_sheets(
         print(f"Error in get_my_sheets: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.delete("/mysheets/{sid}", status_code=204)
+async def delete_from_my_sheets(
+    sid: int, # 삭제할 악보의 sid (Sheet 테이블의 PK)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    내 보관함에서 특정 악보를 삭제합니다.
+    """
+    try:
+        # 1. 현재 로그인한 유저의 숫자 ID(PK) 조회
+        user_record = db.query(User).filter(User.user_id == current_user["user_id"]).first()
+        if not user_record:
+            raise HTTPException(status_code=404, detail="유저 정보를 찾을 수 없습니다.")
+
+        # 2. 보관함(MySheet)에서 해당 유저의 해당 악보 기록 찾기
+        my_sheet_entry = db.query(MySheet).filter(
+            MySheet.user_id == user_record.id,
+            MySheet.sheet_sid == sid
+        ).first()
+
+        if not my_sheet_entry:
+            raise HTTPException(status_code=404, detail="보관함에 해당 악보가 존재하지 않습니다.")
+
+        # 3. 데이터 삭제
+        db.delete(my_sheet_entry)
+        db.commit()
+
+        # 204 No Content는 본문 없이 성공을 응답함
+        return None
+
+    except Exception as e:
+        db.rollback()
+        print(f"보관함 삭제 에러: {e}")
+        raise HTTPException(status_code=500, detail="삭제 처리 중 오류가 발생했습니다.")
+
 @router.get("/{job_id}")
 async def get_sheet_detail(
     job_id: str,
