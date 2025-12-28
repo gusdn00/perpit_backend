@@ -2,6 +2,7 @@ import os
 import uuid
 import boto3
 import datetime
+import httpx
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import get_db
@@ -11,7 +12,8 @@ from models import MusicJob, Sheet, User
 
 load_dotenv()
 
-router = APIRouter(prefix="/create_sheets", tags=["Sheets"])
+router = APIRouter(prefix="/create_sheets", tags=["She  ets"])
+AI_SERVER_URL = "http://127.0.0.1:2222/create_sheets/ai"
 
 # S3 클라이언트 설정
 s3_client = boto3.client(
@@ -42,17 +44,41 @@ async def create_sheets(
     # 2. 고유한 작업 ID(jobID) 생성
     job_id = str(uuid.uuid4())
     user_record = db.query(User).filter(User.user_id == current_user["user_id"]).first()
+   
+    # [중요] 파일 내용을 메모리에 먼저 읽기 (AI 전송 및 S3 업로드 양쪽에서 사용)
+    file_content = await file.read()
+   
+    # 3. AI 서버로 우선 전송 (S3 업로드보다 먼저 실행)
+    async with httpx.AsyncClient() as client:
+        try:
+            ai_data = {
+                "job_id": job_id,
+                "title": title,
+                "purpose": str(purpose),
+                "style": str(style),
+                "difficulty": str(difficulty)
+            }
+            ai_files = {
+                "file": (file.filename, file_content, file.content_type)
+            }
+            # AI 서버에 요청을 던짐 (비동기)
+            await client.post(AI_SERVER_URL, data=ai_data, files=ai_files, timeout=10.0)
+        except Exception as e:
+            print(f"AI 서버 전송 실패: {e}")
+            # AI 전송 실패가 전체 프로세스를 중단시키지 않도록 하려면 여기서 pass 하거나,
+            # 엄격하게 관리하려면 raise를 사용합니다.
+   
     # S3에 저장될 경로 설정 (예: uploads/uuid_파일명.mp3)
     s3_file_path = f"uploads/{job_id}_{file.filename}"
 
     try:
         # 3. S3에 파일 업로드
         # file.file은 실제 파일 객체입니다.
-        s3_client.upload_fileobj(
-            file.file,
-            BUCKET_NAME,
-            s3_file_path,
-            ExtraArgs={'ContentType': file.content_type}
+        s3_client.put_object(
+            Bucket=BUCKET_NAME,
+            Key=s3_file_path,
+            Body=file_content,  # await file.read()로 읽어둔 데이터를 직접 넣습니다.
+            ContentType=file.content_type
         )
     except Exception as e:
         print(f"S3 업로드 에러: {e}")
@@ -127,3 +153,65 @@ async def get_sheet_detail(
         "result_url": job.result_s3_path, # AI가 생성해 넣은 S3 주소
         "created_at": job.created_at
     }
+
+@router.post("/callback/ai-result")
+async def receive_ai_result(
+    job_id: str = Form(...),
+    status: str = Form(...),           # "completed" 또는 "failed"
+    xml_file: UploadFile = File(None),  # 실패 시 파일이 없을 수 있으므로 None 허용
+    db: Session = Depends(get_db)
+):
+    """
+    AI 서버로부터 악보 생성 결과(성공/실패)를 받는 엔드포인트입니다.
+    """
+    try:
+        # 1. DB에서 해당 작업 찾기
+        job = db.query(MusicJob).filter(MusicJob.job_id == job_id).first()
+        sheet = db.query(Sheet).filter(Sheet.job_id == job_id).first()
+
+        if not job:
+            print(f"오류: 존재하지 않는 job_id {job_id}")
+            return {"status": "error", "message": "해당 job_id를 찾을 수 없습니다."}
+
+        # 2. 상태가 'failed'로 온 경우 처리
+        if status == "failed":
+            job.status = "failed"
+            db.commit()
+            print(f"Job {job_id} 생성 실패 상태 반영 완료")
+            return {"status": "success", "message": "실패 상태가 기록되었습니다."}
+
+        # 3. 상태가 'completed'로 온 경우 처리
+        if status == "completed":
+            if not xml_file:
+                return {"status": "error", "message": "성공 상태이지만 XML 파일이 누락되었습니다."}
+
+            # XML 파일 읽기 및 S3 저장
+            xml_content = await xml_file.read()
+            xml_s3_key = f"results/{job_id}_result.xml"
+            
+            s3_client.put_object(
+                Bucket=BUCKET_NAME,
+                Key=xml_s3_key,
+                Body=xml_content,
+                ContentType="application/xml"
+            )
+            
+            xml_url = f"https://{BUCKET_NAME}.s3.amazonaws.com/{xml_s3_key}"
+
+            # DB 정보 업데이트
+            job.result_s3_path = xml_url
+            job.status = "completed"
+            
+            if sheet:
+                sheet.file_path = xml_url
+                
+            db.commit()
+            print(f"Job {job_id} 완료 및 S3 업로드 성공")
+            return {"status": "success", "message": "결과가 성공적으로 저장되었습니다."}
+
+        return {"status": "error", "message": "잘못된 status 값입니다."}
+
+    except Exception as e:
+        db.rollback()
+        print(f"AI 결과 수신 중 에러 발생: {e}")
+        return {"status": "error", "message": str(e)}
