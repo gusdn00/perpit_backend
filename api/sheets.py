@@ -145,12 +145,31 @@ async def get_sheet_detail(
     if job.status != "completed":
         return {"status": job.status, "message": "아직 작업 중입니다."}
 
+    try:
+        # DB에 저장된 전체 URL에서 Key(파일명)만 추출합니다.
+        object_key = job.result_s3_path.split(f"{BUCKET_NAME}.s3.amazonaws.com/")[1]
+
+        presigned_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={
+                'Bucket': BUCKET_NAME,
+                'Key': object_key,
+                # 다운로드 시 파일명을 예쁘게 지정하고 싶을 때 추가
+                'ResponseContentDisposition': f'attachment; filename="{job.title}.musicxml"'
+            },
+            ExpiresIn=3600  # 1시간 동안만 유효
+        )
+    except Exception as e:
+        print(f"Presigned URL 생성 에러: {e}")
+        # 에러 발생 시 원래 저장된 주소라도 보냅니다.
+        presigned_url = job.result_s3_path
+
     # 3. 요청하신 최소 응답 구조에 맞춰 데이터를 반환합니다.
     return {
         "job_id": job.job_id,
         "status": job.status,
         "title": job.title,
-        "result_url": job.result_s3_path, # AI가 생성해 넣은 S3 주소
+        "result_url": presigned_url,
         "created_at": job.created_at
     }
 
