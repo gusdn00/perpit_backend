@@ -13,7 +13,7 @@ from models import MusicJob, Sheet, User, MySheet
 load_dotenv()
 
 router = APIRouter(prefix="/create_sheets", tags=["She  ets"])
-AI_SERVER_URL = "http://127.0.0.1:2222/create_sheets/ai"
+AI_SERVER_URL = "http://127.0.0.1:5001/create_sheets/ai"
 
 # S3 클라이언트 설정
 s3_client = boto3.client(
@@ -249,7 +249,7 @@ async def get_sheet_detail(
                 # 다운로드 시 파일명을 예쁘게 지정하고 싶을 때 추가
                 'ResponseContentDisposition': f'attachment; filename="{job.title}.musicxml"'
             },
-            ExpiresIn=300  # 1시간 동안만 유효
+            ExpiresIn=300
         )
     except Exception as e:
         print(f"Presigned URL 생성 에러: {e}")
