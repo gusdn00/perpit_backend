@@ -228,6 +228,60 @@ async def view_sheet(
         print(f"미리보기 링크 생성 에러: {e}")
         raise HTTPException(status_code=500, detail="미리보기 링크 생성 중 오류가 발생했습니다.")
 
+@router.get("/mysheets/{sid}/view")
+async def view_my_sheet_individual(
+    sid: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    보관함의 특정 악보(sid)에 대한 OSMD 전용 미리보기 링크를 생성합니다.
+    """
+    try:
+        # 1. 현재 로그인한 유저 정보 확인
+        user_record = db.query(User).filter(User.user_id == current_user["user_id"]).first()
+        if not user_record:
+            raise HTTPException(status_code=404, detail="유저 정보를 찾을 수 없습니다.")
+
+        # 2. 보관함(MySheet)에 해당 악보가 있는지 권한 확인
+        # 유저가 남의 악보 sid를 넣어서 조회하는 것을 방지합니다.
+        my_sheet_exists = db.query(MySheet).filter(
+            MySheet.user_id == user_record.id,
+            MySheet.sheet_sid == sid
+        ).first()
+
+        if not my_sheet_exists:
+            raise HTTPException(status_code=403, detail="해당 악보에 대한 접근 권한이 없거나 보관함에 없습니다.")
+
+        # 3. 실제 악보(Sheet) 정보 가져오기
+        sheet = db.query(Sheet).filter(Sheet.sid == sid).first()
+        if not sheet or not sheet.file_path:
+            raise HTTPException(status_code=404, detail="악보 파일 경로를 찾을 수 없습니다.")
+
+        # 4. S3 Presigned URL 생성 (OSMD용 인라인 설정)
+        object_key = sheet.file_path.split(f"{BUCKET_NAME}.s3.amazonaws.com/")[1]
+
+        view_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={
+                'Bucket': BUCKET_NAME,
+                'Key': object_key,
+                'ResponseContentType': 'application/xml',
+                'ResponseContentDisposition': 'inline'
+            },
+            ExpiresIn=60 # 1분 유효
+        )
+
+        return {
+            "sid": sid,
+            "name": sheet.title,
+            "view_url": view_url
+        }
+
+    except Exception as e:
+        print(f"보관함 개별 미리보기 생성 에러: {e}")
+        raise HTTPException(status_code=500, detail="미리보기 링크를 생성하는 중 오류가 발생했습니다.")
+
 @router.delete("/mysheets/{sid}", status_code=204)
 async def delete_from_my_sheets(
     sid: int, # 삭제할 악보의 sid (Sheet 테이블의 PK)
