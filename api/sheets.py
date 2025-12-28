@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from core.security import get_current_user  # 이전에 만든 토큰 검증 함수
 from dotenv import load_dotenv
-from models import MusicJob, Sheet, User
+from models import MusicJob, Sheet, User, MySheet
 
 load_dotenv()
 
@@ -215,3 +215,42 @@ async def receive_ai_result(
         db.rollback()
         print(f"AI 결과 수신 중 에러 발생: {e}")
         return {"status": "error", "message": str(e)}
+    
+@router.post("/{job_id}/add", status_code=201)
+async def add_to_my_sheets(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    # 1. 문자열 ID를 가진 유저 객체를 찾습니다. (이 과정이 있어야 '숫자 ID'를 얻을 수 있습니다)
+    user_record = db.query(User).filter(User.user_id == current_user["user_id"]).first()
+    if not user_record:
+        raise HTTPException(status_code=404, detail="유저 정보를 찾을 수 없습니다.")
+    
+    # 2. 해당 악보가 존재하는지 확인
+    sheet = db.query(Sheet).filter(Sheet.job_id == job_id).first()
+    if not sheet:
+        raise HTTPException(status_code=404, detail="악보를 찾을 수 없습니다.")
+
+    # 3. 이미 보관함에 있는지 중복 확인
+    existing_entry = db.query(MySheet).filter(
+        MySheet.user_id == user_record.id,
+        MySheet.sheet_sid == sheet.sid
+    ).first()
+
+    if existing_entry:
+        return {"message": "이미 보관함에 추가된 악보입니다."}
+
+    # 4. 보관함(MySheet)에 저장
+    try:
+        new_my_sheet = MySheet(
+            user_id=user_record.id,
+            sheet_sid=sheet.sid
+        )
+        db.add(new_my_sheet)
+        db.commit()
+        return {"message": "내 보관함에 성공적으로 추가되었습니다."}
+    except Exception as e:
+        db.rollback()
+        print(f"보관함 저장 에러: {e}")
+        raise HTTPException(status_code=500, detail="보관함 저장 중 오류가 발생했습니다.")
