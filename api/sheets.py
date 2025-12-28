@@ -156,7 +156,7 @@ async def get_my_sheets(
                             'Key': object_key,
                             'ResponseContentDisposition': f'attachment; filename="{s.title}.musicxml"'
                         },
-                        ExpiresIn=60  # 1분(60초) 설정
+                        ExpiresIn=300
                     )
                 else:
                     link = None
@@ -179,6 +179,54 @@ async def get_my_sheets(
         # 에러 발생 시 로그 출력
         print(f"Error in get_my_sheets: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+@router.get("/{job_id}/view")
+async def view_sheet(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    OSMD 등 프론트엔드 렌더러가 XML 데이터를 직접 읽을 수 있도록 
+    브라우저 '인라인' 출력용 보안 링크를 생성합니다.
+    """
+    # 1. DB에서 악보 작업 정보 조회
+    job = db.query(MusicJob).filter(
+        MusicJob.job_id == job_id,
+        MusicJob.user_id == current_user["user_id"]
+    ).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="악보 정보를 찾을 수 없습니다.")
+    
+    if job.status != "completed" or not job.result_s3_path:
+        raise HTTPException(status_code=400, detail="렌더링 가능한 악보가 아직 생성되지 않았습니다.")
+
+    try:
+        # 2. S3 Object Key 추출
+        object_key = job.result_s3_path.split(f"{BUCKET_NAME}.s3.amazonaws.com/")[1]
+
+        # 3. 1분 유효 '인라인' 전송 링크 생성
+        # ResponseContentType을 정확히 지정하고, Disposition을 'inline'으로 설정합니다.
+        presigned_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={
+                'Bucket': BUCKET_NAME,
+                'Key': object_key,
+                'ResponseContentType': 'application/xml', # XML임을 명시
+                'ResponseContentDisposition': 'inline'    # 다운로드 대신 브라우저가 열도록 설정
+            },
+            ExpiresIn=300
+        )
+
+        return {
+            "message": "미리보기용 데이터 링크가 생성되었습니다.",
+            "view_url": presigned_url
+        }
+
+    except Exception as e:
+        print(f"미리보기 링크 생성 에러: {e}")
+        raise HTTPException(status_code=500, detail="미리보기 링크 생성 중 오류가 발생했습니다.")
 
 @router.delete("/mysheets/{sid}", status_code=204)
 async def delete_from_my_sheets(
