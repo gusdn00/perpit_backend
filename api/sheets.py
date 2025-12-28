@@ -54,9 +54,9 @@ async def create_sheets(
             ai_data = {
                 "job_id": job_id,
                 "title": title,
-                "purpose": str(purpose),
-                "style": str(style),
-                "difficulty": str(difficulty)
+                "purpose": purpose,
+                "style": style,
+                "difficulty": difficulty
             }
             ai_files = {
                 "file": (file.filename, file_content, file.content_type)
@@ -116,7 +116,7 @@ async def create_sheets(
 
     return {
         "jobId": job_id,
-        "message": "악보 생성 작업이 시작되었습니다."
+        "message": "악보 생성 작업이 시작되었습 니다."
     }
 
 @router.get("/mysheets", status_code=200)
