@@ -1,13 +1,13 @@
 from pydantic import BaseModel, EmailStr, Field
 
-# 회원가입 요청 (POST /signup)
+# 회원가입 요청
 class UserCreate(BaseModel):
-    user_id: str = Field(..., min_length=8, max_length=16, pattern="^[a-zA-Z0-9]+$")
-    name: str = Field(..., min_length=3, max_length=30)
-    password: str = Field(..., min_length=8, max_length=16)
+    user_id: str = Field(..., min_length=8, max_length=20, pattern="^[a-zA-Z0-9]+$")
+    name: str = Field(..., min_length=3, max_length=10)
+    password: str = Field(..., min_length=8, max_length=20)
     email: EmailStr
 
-# 로그인 요청 (POST /login)
+# 로그인 요청
 class UserLogin(BaseModel):
     id: str = Field(..., min_length=8, max_length=16)
     password: str = Field(..., min_length=8, max_length=16)

@@ -10,7 +10,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SECRET_KEY = "PERPIT_SECRET_KEY" 
 ALGORITHM = "HS256"
 
-# 2. 헤더 설정 (Authorization 헤더를 읽음)
+# 2. 헤더 설정 (Authorization 헤더 읽음)
 api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 
 def get_password_hash(password):
@@ -25,7 +25,7 @@ def create_access_token(data: dict):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-# 3. 인증 함수 (프론트엔드 Bearer 대응 로직 추가)
+# 3. 인증 함수
 async def get_current_user(token: str = Depends(api_key_header)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -37,10 +37,10 @@ async def get_current_user(token: str = Depends(api_key_header)):
         raise credentials_exception
 
     try:
-        # 핵심: 프론트엔드에서 보낸 'Bearer ' 문자열을 확실하게 제거
+        #프론트엔드에서 보낸 'Bearer ' 문자열 제거
         if token.startswith("Bearer "):
             token = token.split(" ")[1]
-        elif token.startswith("bearer "): # 소문자 대응
+        elif token.startswith("bearer "):
             token = token.split(" ")[1]
 
         # 토큰 해독
@@ -52,6 +52,7 @@ async def get_current_user(token: str = Depends(api_key_header)):
             
         return {"user_id": user_id}
         
+    # 토큰 변조, 만료 또는 형식 오류(IndexError) 발생 시
+    
     except (JWTError, IndexError):
-        # 토큰 변조, 만료 또는 형식 오류(IndexError) 발생 시
         raise credentials_exception

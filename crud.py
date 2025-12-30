@@ -1,4 +1,3 @@
-# crud.py
 from sqlalchemy.orm import Session
 import models, schemas
 from core import security
