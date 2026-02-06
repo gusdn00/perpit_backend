@@ -16,9 +16,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Express의 app.use('/auth', authRouter)와 동일
 app.include_router(auth.router)
 app.include_router(sheets.router)
 
 @app.get("/")
 def root():
-    return {"message": "Perpit API Server is Running"}
+    return {"message": "Perpit Backend Server is Running"}
