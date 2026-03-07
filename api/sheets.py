@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from core.security import get_current_user
 from dotenv import load_dotenv
-from models import MusicJob, Sheet, User, MySheet
+from models import MusicJob, Sheet, User, MySheet, TokenTransaction
 
 load_dotenv()
 
@@ -35,20 +35,27 @@ async def create_sheets(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    # 1. 파일 확장자 검사
+    # 1. 토큰 잔액 확인 (악보 생성 1회당 3토큰 필요)
+    TOKEN_COST = 3
+    user_record = db.query(User).filter(User.user_id == current_user["user_id"]).first()
+    if not user_record:
+        raise HTTPException(status_code=404, detail="유저 정보를 찾을 수 없습니다.")
+    if user_record.token_balance < TOKEN_COST:
+        raise HTTPException(status_code=402, detail=f"토큰이 부족합니다. (필요: {TOKEN_COST}, 보유: {user_record.token_balance})")
+
+    # 2. 파일 확장자 검사
     allowed_extensions = [".mp3", ".wav"]
     file_ext = os.path.splitext(file.filename)[1].lower()
     if file_ext not in allowed_extensions:
         raise HTTPException(status_code=400, detail="지원하지 않는 파일 형식입니다. (.mp3, .wav만 가능)")
 
-    # 2. 고유한 작업 ID(jobID) 생성
+    # 3. 고유한 작업 ID(jobID) 생성
     job_id = str(uuid.uuid4())
-    user_record = db.query(User).filter(User.user_id == current_user["user_id"]).first()
-   
+
     # 파일 내용을 메모리에 먼저 읽기 (AI 전송 및 S3 업로드 양쪽에서 사용)
     file_content = await file.read()
-   
-    # 3. AI 서버로 우선 전송
+
+    # 4. AI 서버로 우선 전송
     async with httpx.AsyncClient() as client:
         try:
             ai_data = {
@@ -77,7 +84,7 @@ async def create_sheets(
     s3_file_path = f"uploads/{job_id}_{file.filename}"
 
     try:
-        # 4. S3에 파일 업로드
+        # 5. S3에 파일 업로드
         s3_client.put_object(
             Bucket=BUCKET_NAME,
             Key=s3_file_path,
@@ -88,7 +95,7 @@ async def create_sheets(
         print(f"S3 업로드 에러: {e}")
         raise HTTPException(status_code=500, detail="파일 업로드 중 서버 오류가 발생했습니다.")
 
-    # 5. DB에 작업 기록 남기기
+    # 6. DB에 작업 기록 남기기
     try:
         new_job = MusicJob(
             user_id=current_user["user_id"],    
@@ -111,11 +118,20 @@ async def create_sheets(
         )
         db.add(new_sheet)
 
-        db.commit()  
+        # 7. 토큰 차감 및 내역 기록
+        user_record.token_balance -= TOKEN_COST
+        token_tx = TokenTransaction(
+            user_id=user_record.id,
+            amount=-TOKEN_COST,
+            transaction_type="GENERATION",
+            description=f"악보 생성 사용 ({title})"
+        )
+        db.add(token_tx)
+
+        db.commit()
         db.refresh(new_job)
     except Exception as e:
         print(f"DB 기록 에러: {e}")
-        # S3 업로드는 성공했으나 DB 기록에 실패한 경우
         raise HTTPException(status_code=500, detail="데이터베이스 기록 중 오류가 발생했습니다.")
 
     return {
