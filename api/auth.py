@@ -1,4 +1,5 @@
 # api/auth.py
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from database import get_db
@@ -30,6 +31,40 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
 def check_id(id: str, db: Session = Depends(get_db)):
     exists = crud.get_user_by_user_id(db, id) is not None
     return {"isRedundancy": exists, "message": "이미 사용 중" if exists else "사용 가능"}
+
+
+# 카카오 로그인
+@router.post("/kakao")
+async def kakao_login(request: schemas.SocialLoginRequest, db: Session = Depends(get_db)):
+    # 1. 카카오 API로 유저 정보 조회
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            "https://kapi.kakao.com/v2/user/me",
+            headers={"Authorization": f"Bearer {request.access_token}"}
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="카카오 액세스 토큰이 유효하지 않습니다.")
+
+    kakao_data = resp.json()
+    kakao_id = str(kakao_data["id"])
+    kakao_account = kakao_data.get("kakao_account", {})
+    profile = kakao_account.get("profile", {})
+
+    name = profile.get("nickname", "카카오유저")
+    # 이메일 동의 안 한 경우 플레이스홀더 사용
+    email = kakao_account.get("email", f"{kakao_id}@kakao.user")
+
+    # 2. 기존 유저 확인 (social_id 기준)
+    db_user = crud.get_user_by_social_id(db, kakao_id)
+
+    # 3. 없으면 자동 회원가입
+    if not db_user:
+        db_user = crud.create_social_user(db, kakao_id, name, email, "kakao")
+
+    # 4. JWT 발급
+    token = security.create_access_token(data={"sub": db_user.user_id})
+    return {"token": token, "message": "카카오 로그인 성공"}
 
 
 # 프로필 정보 확인
