@@ -18,6 +18,7 @@ KAKAO_PAY_READY_URL = "https://open-api.kakaopay.com/online/v1/payment/ready"
 KAKAO_PAY_APPROVE_URL = "https://open-api.kakaopay.com/online/v1/payment/approve"
 KAKAO_SECRET_KEY = os.getenv("KAKAO_PAY_SECRET_KEY")
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 CID = "TC0ONETIME"    # 카카오페이 테스트 가맹점 코드
 TOKEN_PRICE = 100     # 토큰 1개 = 100원
@@ -74,9 +75,9 @@ async def payment_ready(
         "quantity": request.quantity,
         "total_amount": total_amount,
         "tax_free_amount": 0,
-        "approval_url": f"{BASE_URL}/payment/approve?partner_order_id={partner_order_id}",
-        "cancel_url":   f"{BASE_URL}/payment/cancel?partner_order_id={partner_order_id}",
-        "fail_url":     f"{BASE_URL}/payment/fail?partner_order_id={partner_order_id}"
+        "approval_url": f"{FRONTEND_URL}/payment/success?partner_order_id={partner_order_id}",
+        "cancel_url":   f"{FRONTEND_URL}/payment/cancel",
+        "fail_url":     f"{FRONTEND_URL}/payment/fail"
     }
 
     async with httpx.AsyncClient() as client:
