@@ -18,7 +18,7 @@ def signup(user: schemas.UserCreate, db: Session = Depends(get_db)):
 # 로그인
 @router.post("/login")
 def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
-    db_user = crud.get_user_by_user_id(db, user.id)
+    db_user = crud.get_user_by_user_id(db, user.user_id)
     if not db_user or not security.verify_password(user.password, db_user.password):
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호 불일치")
     

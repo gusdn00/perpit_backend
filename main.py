@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 import models
 from database import engine
-from api import auth, sheets
+from api import auth, sheets, payment
 from fastapi.middleware.cors import CORSMiddleware
 
 models.Base.metadata.create_all(bind=engine)
@@ -19,6 +19,7 @@ app.add_middleware(
 # Express의 app.use('/auth', authRouter)와 동일
 app.include_router(auth.router)
 app.include_router(sheets.router)
+app.include_router(payment.router)
 
 @app.get("/")
 def root():
