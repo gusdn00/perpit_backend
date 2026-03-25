@@ -41,9 +41,9 @@ class KakaoPayPayment(Base):
     tax_free_amount = Column(Integer, default=0) # 비과세
     
     # 카카오 응답 데이터 (중요)
-    tid = Column(String(20), unique=True, index=True, nullable=True) # 결제 고유 번호 (Ready 응답 시 저장)
-    next_redirect_pc_url = Column(String(255), nullable=True)
-    next_redirect_mobile_url = Column(String(255), nullable=True)
+    tid = Column(String(50), unique=True, index=True, nullable=True) # 결제 고유 번호 (Ready 응답 시 저장)
+    next_redirect_pc_url = Column(String(500), nullable=True)
+    next_redirect_mobile_url = Column(String(500), nullable=True)
     
     # 결제 승인(Approve) 데이터
     pg_token = Column(String(255), nullable=True) # 리다이렉트 시 받음

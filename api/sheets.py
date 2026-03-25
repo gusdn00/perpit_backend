@@ -3,17 +3,18 @@ import uuid
 import boto3
 import datetime
 import httpx
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Response
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Response, Body
 from sqlalchemy.orm import Session
 from database import get_db
 from core.security import get_current_user
 from dotenv import load_dotenv
 from models import MusicJob, Sheet, User, MySheet, TokenTransaction
+from schemas import RemixRequest
 
 load_dotenv()
 
-router = APIRouter(prefix="/create_sheets", tags=["She  ets"])
-AI_SERVER_URL = "http://127.0.0.1:5001/create_sheets/ai"
+router = APIRouter(prefix="/create_sheets", tags=["Sheets"])
+AI_SERVER_URL = os.getenv("AI_SERVER_URL", "http://www.perpit.kr:5001/create_sheets/ai")
 
 # S3 클라이언트 설정
 s3_client = boto3.client(
@@ -136,7 +137,7 @@ async def create_sheets(
 
     return {
         "jobId": job_id,
-        "message": "악보 생성 작업이 시작되었습 니다."
+        "message": "악보 생성 작업이 시작되었습니다."
     }
 
 @router.get("/mysheets", status_code=200)
@@ -294,6 +295,8 @@ async def delete_from_my_sheets(
         # 204 No Content는 본문 없이 성공을 응답함
         return None
 
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         print(f"보관함 삭제 에러: {e}")
@@ -413,10 +416,143 @@ async def get_sheet_detail(
         "created_at": job.created_at
     }
 
+@router.post("/mysheets/{sid}/remix", status_code=202)
+async def remix_sheet(
+    sid: int,
+    request: RemixRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    REMIX_COST = 1
+
+    # 1. 유저 확인
+    user_record = db.query(User).filter(User.user_id == current_user["user_id"]).first()
+    if not user_record:
+        raise HTTPException(status_code=404, detail="유저 정보를 찾을 수 없습니다.")
+
+    # 2. 보관함에 있는 악보인지 확인
+    my_sheet = db.query(MySheet).filter(
+        MySheet.user_id == user_record.id,
+        MySheet.sheet_sid == sid
+    ).first()
+    if not my_sheet:
+        raise HTTPException(status_code=403, detail="보관함에 없는 악보입니다.")
+
+    # 3. 원본 악보 및 작업 정보 조회
+    sheet = db.query(Sheet).filter(Sheet.sid == sid).first()
+    if not sheet:
+        raise HTTPException(status_code=404, detail="악보 정보를 찾을 수 없습니다.")
+
+    original_job = db.query(MusicJob).filter(MusicJob.job_id == sheet.job_id).first()
+    if not original_job or not original_job.original_s3_path:
+        raise HTTPException(status_code=400, detail="원본 음원 정보를 찾을 수 없습니다.")
+
+    # 4. 토큰 잔액 확인
+    if user_record.token_balance < REMIX_COST:
+        raise HTTPException(
+            status_code=402,
+            detail=f"토큰이 부족합니다. (필요: {REMIX_COST}, 보유: {user_record.token_balance})"
+        )
+
+    # 5. S3에서 원본 음원 다운로드
+    try:
+        s3_key = original_job.original_s3_path.split(f"s3://{BUCKET_NAME}/")[1]
+        s3_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
+        file_content = s3_obj['Body'].read()
+        original_filename = s3_key.split("/")[-1]  # uuid_파일명.mp3 형태
+    except Exception as e:
+        print(f"S3 원본 음원 다운로드 에러: {e}")
+        raise HTTPException(status_code=500, detail="원본 음원을 불러오는 중 오류가 발생했습니다.")
+
+    # 6. 새 작업 ID 생성 및 제목 넘버링
+    new_job_id = str(uuid.uuid4())
+
+    # 같은 제목(원본 포함)의 악보 수를 세서 다음 번호 결정
+    same_title_count = db.query(Sheet).filter(
+        Sheet.creator_id == user_record.id,
+        Sheet.title.like(f"{sheet.title}%")
+    ).count()
+    new_title = f"{sheet.title} ({same_title_count + 1})"
+
+    # 7. AI 서버로 전송
+    async with httpx.AsyncClient() as client:
+        try:
+            ai_data = {
+                "job_id": new_job_id,
+                "title": new_title,
+                "purpose": request.purpose,
+                "style": request.style,
+                "difficulty": request.difficulty
+            }
+            ai_files = {
+                "file": (original_filename, file_content, "audio/mpeg")
+            }
+            response = await client.post(AI_SERVER_URL, data=ai_data, files=ai_files, timeout=60.0)
+            response.raise_for_status()
+            print(f"AI 서버 리믹스 전송 성공: {response.status_code}")
+        except httpx.HTTPStatusError as e:
+            print(f"AI 서버가 에러를 반환함: {e.response.status_code} - {e.response.text}")
+        except Exception as e:
+            print(f"AI 서버 통신 에러 발생: {e}")
+
+    # 8. DB에 새 작업 및 악보 기록, 토큰 차감
+    try:
+        new_job = MusicJob(
+            user_id=current_user["user_id"],
+            job_id=new_job_id,
+            title=new_title,
+            original_s3_path=original_job.original_s3_path,  # 원본 음원 재사용
+            status="pending"
+        )
+        db.add(new_job)
+
+        new_sheet = Sheet(
+            job_id=new_job_id,
+            title=new_title,
+            file_path=None,
+            purpose=request.purpose,
+            style=request.style,
+            difficulty=request.difficulty,
+            creator_id=user_record.id,
+            created_at=datetime.datetime.utcnow()
+        )
+        db.add(new_sheet)
+        db.flush()  # new_sheet.sid 확보
+
+        # 보관함에 자동 추가
+        new_my_sheet = MySheet(
+            user_id=user_record.id,
+            sheet_sid=new_sheet.sid
+        )
+        db.add(new_my_sheet)
+
+        # 토큰 차감 및 내역 기록
+        user_record.token_balance -= REMIX_COST
+        token_tx = TokenTransaction(
+            user_id=user_record.id,
+            amount=-REMIX_COST,
+            transaction_type="GENERATION",
+            description=f"악보 리믹스 사용 ({new_title})"
+        )
+        db.add(token_tx)
+
+        db.commit()
+        db.refresh(new_job)
+    except Exception as e:
+        db.rollback()
+        print(f"DB 기록 에러: {e}")
+        raise HTTPException(status_code=500, detail="데이터베이스 기록 중 오류가 발생했습니다.")
+
+    return {
+        "jobId": new_job_id,
+        "message": "새로운 버전의 악보 생성이 시작되었습니다."
+    }
+
+
 """
 Add my sheets 기능 API
 """
-    
+
 @router.post("/{job_id}/add", status_code=201)
 async def add_to_my_sheets(
     job_id: str,

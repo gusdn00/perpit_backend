@@ -96,3 +96,8 @@ class TokenHistoryResponse(BaseModel):
 class SheetCreateResponse(BaseModel):
     job_id: str
     message: str
+
+class RemixRequest(BaseModel):
+    purpose: int = Field(..., ge=1, le=2)
+    style: int = Field(..., ge=1, le=3)
+    difficulty: int = Field(..., ge=1, le=2)
