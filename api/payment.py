@@ -21,7 +21,12 @@ BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 CID = "TC0ONETIME"    # 카카오페이 테스트 가맹점 코드
-TOKEN_PRICE = 100     # 토큰 1개 = 100원
+
+TOKEN_PACKAGES = {
+    10: 1000,
+    30: 2500,
+    50: 4000,
+}
 
 
 def _kakao_headers():
@@ -47,8 +52,11 @@ async def payment_ready(
     if not user:
         raise HTTPException(status_code=404, detail="유저 정보를 찾을 수 없습니다.")
 
+    if request.quantity not in TOKEN_PACKAGES:
+        raise HTTPException(status_code=400, detail=f"유효하지 않은 토큰 수량입니다. 가능한 패키지: {list(TOKEN_PACKAGES.keys())}")
+
     partner_order_id = str(uuid.uuid4())
-    total_amount = request.quantity * TOKEN_PRICE
+    total_amount = TOKEN_PACKAGES[request.quantity]
 
     # DB에 READY 상태로 먼저 저장 (tid는 카카오 응답 후 업데이트)
     payment = KakaoPayPayment(

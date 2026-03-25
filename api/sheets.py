@@ -290,6 +290,14 @@ async def delete_from_my_sheets(
 
         # 3. 데이터 삭제
         db.delete(my_sheet_entry)
+
+        # 4. 연결된 music_job, sheet도 삭제
+        sheet = db.query(Sheet).filter(Sheet.sid == sid).first()
+        if sheet:
+            if sheet.job_id:
+                db.query(MusicJob).filter(MusicJob.job_id == sheet.job_id).delete(synchronize_session=False)
+            db.query(Sheet).filter(Sheet.sid == sid).delete(synchronize_session=False)
+
         db.commit()
 
         # 204 No Content는 본문 없이 성공을 응답함
