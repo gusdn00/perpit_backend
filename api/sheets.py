@@ -288,10 +288,11 @@ async def delete_from_my_sheets(
         if not my_sheet_entry:
             raise HTTPException(status_code=404, detail="보관함에 해당 악보가 없습니다.")
 
-        # 3. 데이터 삭제
+        # 3. my_sheets 먼저 삭제 후 즉시 flush (FK 제약 해제)
         db.delete(my_sheet_entry)
+        db.flush()
 
-        # 4. 연결된 music_job, sheet도 삭제
+        # 4. 연결된 music_job, sheet 삭제
         sheet = db.query(Sheet).filter(Sheet.sid == sid).first()
         if sheet:
             if sheet.job_id:
