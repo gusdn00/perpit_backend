@@ -30,9 +30,10 @@ BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME")
 async def create_sheets(
     file: UploadFile = File(...),
     title: str = Form(..., min_length=1, max_length=50), 
-    purpose: int = Form(..., ge=1, le=2),  
-    style: int = Form(..., ge=1, le=3),    
-    difficulty: int = Form(..., ge=1, le=2), 
+    purpose: int = Form(..., ge=1, le=2),
+    style: int = Form(..., ge=1, le=3),
+    difficulty: int = Form(..., ge=1, le=2),
+    instrument: int = Form(..., ge=1),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -64,7 +65,8 @@ async def create_sheets(
                 "title": title,
                 "purpose": purpose,
                 "style": style,
-                "difficulty": difficulty
+                "difficulty": difficulty,
+                "instrument": instrument
             }
             ai_files = {
                 "file": (file.filename, file_content, file.content_type)
@@ -110,11 +112,12 @@ async def create_sheets(
         new_sheet = Sheet(
             job_id=job_id,
             title=title,
-            file_path=None,  
+            file_path=None,
             purpose=purpose,
             style=style,
             difficulty=difficulty,
-            creator_id=user_record.id, 
+            instrument=instrument,
+            creator_id=user_record.id,
             created_at=datetime.datetime.utcnow()
         )
         db.add(new_sheet)
@@ -491,7 +494,8 @@ async def remix_sheet(
                 "title": new_title,
                 "purpose": request.purpose,
                 "style": request.style,
-                "difficulty": request.difficulty
+                "difficulty": request.difficulty,
+                "instrument": request.instrument
             }
             ai_files = {
                 "file": (original_filename, file_content, "audio/mpeg")
@@ -522,6 +526,7 @@ async def remix_sheet(
             purpose=request.purpose,
             style=request.style,
             difficulty=request.difficulty,
+            instrument=request.instrument,
             creator_id=user_record.id,
             created_at=datetime.datetime.utcnow()
         )
