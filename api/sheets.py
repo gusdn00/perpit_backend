@@ -180,7 +180,8 @@ async def get_my_sheets(
             data.append({
                 "sid": s.sid,
                 "name": s.title,
-                "link": link
+                "link": link,
+                "instrument": s.instrument
             })
 
         return {
