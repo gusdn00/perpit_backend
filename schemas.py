@@ -101,4 +101,4 @@ class RemixRequest(BaseModel):
     purpose: int = Field(..., ge=1, le=2)
     style: int = Field(..., ge=1, le=3)
     difficulty: int = Field(..., ge=1, le=2)
-    instrument: int = Field(..., ge=1)
+    instrument: int = Field(..., ge=1, le=2)  # 1: 피아노, 2: 기타

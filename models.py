@@ -86,7 +86,7 @@ class Sheet(Base):
     purpose = Column(Integer)     # 1: 반주용, 2: 연주용
     style = Column(Integer)       # 1: 락, 2: 발라드, 3: 오리지널
     difficulty = Column(Integer)  # 1: Easy, 2: Normal
-    instrument = Column(Integer, nullable=True)  # 1: 피아노, 2: 기타, ...
+    instrument = Column(Integer, nullable=True)  # 1: 피아노, 2: 기타
     creator_id = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 

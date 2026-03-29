@@ -33,7 +33,7 @@ async def create_sheets(
     purpose: int = Form(..., ge=1, le=2),
     style: int = Form(..., ge=1, le=3),
     difficulty: int = Form(..., ge=1, le=2),
-    instrument: int = Form(..., ge=1),
+    instrument: int = Form(..., ge=1, le=2),  # 1: 피아노, 2: 기타
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
